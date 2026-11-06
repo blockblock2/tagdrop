@@ -1,7 +1,7 @@
 {
   "name": "tagdrop",
   "title": "TagDrop",
-  "version": "1.0.0",
-  "description": "Send a .bin file to an Android phone over Bluetooth or USB, then write it to an NFC tag. The phone types a code shown on your computer.",
+  "version": "1.1.0",
+  "description": "Send a .bin or .nfc file to your phone over Bluetooth or USB, or build a tag (links, Wi-Fi, contacts and more), then write it to an NFC tag. The phone types a code shown on your Mac.",
   "main": "run.sh"
 }
