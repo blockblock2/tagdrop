@@ -7,7 +7,7 @@ bananapeel install blockblock2/tagdrop
 bananapeel run tagdrop
 ```
 
-1. Drag your `.bin` file into the window. TagDrop shows a code like `ABC123`.
+1. Drop your `.bin` file on the TagDrop window (or click **Choose File…**). It shows a code like `ABC123`.
 2. On the phone, open **https://tagdropper.pages.dev** in Chrome and type the code.
 3. Tap **Bluetooth** (or **USB cable**), then hold an NFC tag to the back of the phone.
 

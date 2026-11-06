@@ -1,166 +1,149 @@
-// TagDrop — send a .bin file from this Mac to an Android phone over
-// Bluetooth or a USB cable. The phone opens the TagDrop website, types the
-// code shown here, and writes the file to an NFC tag.
+// TagDrop — send a .bin file from this Mac to a phone over Bluetooth or a USB
+// cable. The phone opens the TagDrop website, types the code shown here, and
+// writes the file to an NFC tag.
 //
-// Uses only frameworks built into macOS (CoreBluetooth + Network), so it runs
-// with BananaPeel without installing anything.
+// One Swift file using only what's built into macOS (SwiftUI, CoreBluetooth,
+// Network), so it runs with BananaPeel without installing anything.
 
-import Foundation
+import AppKit
+import SwiftUI
 import CoreBluetooth
 import Network
+import UniformTypeIdentifiers
 
 let SITE = "https://tagdropper.pages.dev"
+let SITE_SHORT = "tagdropper.pages.dev"
 let PORT: UInt16 = 8642
 let MAX_SIZE = 64 * 1024
 let CHUNK = 512 // biggest value one Bluetooth characteristic can hold
 
-// MARK: - Pick the file
-
-func unescapeDragged(_ raw: String) -> String {
-    var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-    if s.count >= 2, (s.hasPrefix("'") && s.hasSuffix("'")) || (s.hasPrefix("\"") && s.hasSuffix("\"")) {
-        return String(s.dropFirst().dropLast())
-    }
-    var out = ""
-    var escaping = false
-    for ch in s {
-        if escaping { out.append(ch); escaping = false }
-        else if ch == "\\" { escaping = true }
-        else { out.append(ch) }
-    }
-    s = out
-    if s.hasPrefix("~") { s = NSString(string: s).expandingTildeInPath }
-    return s
-}
-
-func pickFile() -> URL {
-    if CommandLine.arguments.count > 1 {
-        return URL(fileURLWithPath: unescapeDragged(CommandLine.arguments[1]))
-    }
-    print("Drag your .bin file into this window, then press Enter:")
-    print("> ", terminator: "")
-    fflush(stdout)
-    guard let line = readLine(), !line.trimmingCharacters(in: .whitespaces).isEmpty else {
-        print("No file given. Bye!")
-        exit(1)
-    }
-    return URL(fileURLWithPath: unescapeDragged(line))
-}
-
-func loadFile(_ url: URL) -> Data {
-    guard let d = try? Data(contentsOf: url) else {
-        print("✖ Couldn't open \(url.path)")
-        exit(1)
-    }
-    return d
-}
-
-let fileURL = pickFile()
-let fileData = loadFile(fileURL)
-if fileData.isEmpty { print("✖ That file is empty."); exit(1) }
-if fileData.count > MAX_SIZE {
-    print("✖ That file is \(fileData.count) bytes. NFC tags hold at most a few KB, so TagDrop only sends files up to \(MAX_SIZE / 1024) KB.")
-    exit(1)
-}
-
-// MARK: - Code (e.g. ABC123), also baked into the Bluetooth service ID
-
-let alphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") // no 0/O or 1/I mix-ups
-let code = String((0..<6).map { _ in alphabet.randomElement()! })
-let codeHex = code.utf8.map { String(format: "%02X", $0) }.joined()
-let SERVICE = CBUUID(string: "B4A70000-0000-4000-8000-\(codeHex)")
 let INFO_C = CBUUID(string: "B4A70001-0000-4000-8000-000000000000")
 let OFFSET_C = CBUUID(string: "B4A70002-0000-4000-8000-000000000000")
 let DATA_C = CBUUID(string: "B4A70003-0000-4000-8000-000000000000")
+let ALPHABET = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") // no 0/O or 1/I mix-ups
 
-let infoJSON = try! JSONSerialization.data(withJSONObject: [
-    "name": fileURL.lastPathComponent,
-    "size": fileData.count,
-    "code": code,
-])
+// MARK: - State shown in the window
 
-func progress(_ sent: Int, via: String) {
-    let pct = Int(Double(sent) / Double(fileData.count) * 100)
-    let bar = String(repeating: "█", count: pct / 5) + String(repeating: "░", count: 20 - pct / 5)
-    print("\r   \(via): \(bar) \(pct)%", terminator: sent >= fileData.count ? "\n" : "")
-    fflush(stdout)
-    if sent >= fileData.count {
-        print("   ✓ Sent! The phone can write it to a tag now. (Ctrl+C to quit, or leave open to send again.)")
+final class Model: ObservableObject {
+    @Published var fileName = ""
+    @Published var fileData = Data()
+    @Published var code = ""
+    @Published var btText = "Starting Bluetooth…"
+    @Published var btOK = false
+    @Published var cableText = ""
+    @Published var cableOK = false
+    @Published var progress: Double = 0
+    @Published var sentVia: String?
+    @Published var error: String?
+
+    var infoJSON = Data()
+    var url: URL?
+    var hasFile: Bool { !fileData.isEmpty }
+    var service: CBUUID {
+        CBUUID(string: "B4A70000-0000-4000-8000-" + code.utf8.map { String(format: "%02X", $0) }.joined())
+    }
+    var onNewFile: (() -> Void)?
+
+    func load(_ url: URL) {
+        error = nil
+        guard let d = try? Data(contentsOf: url) else { error = "Couldn't open \(url.lastPathComponent)."; return }
+        if d.isEmpty { error = "That file is empty."; return }
+        if d.count > MAX_SIZE {
+            error = "That file is \(d.count / 1024) KB. NFC tags hold a few KB at most, so TagDrop sends files up to \(MAX_SIZE / 1024) KB."
+            return
+        }
+        self.url = url
+        fileName = url.lastPathComponent
+        fileData = d
+        code = String((0..<6).map { _ in ALPHABET.randomElement()! })
+        infoJSON = try! JSONSerialization.data(withJSONObject: ["name": fileName, "size": d.count, "code": code])
+        progress = 0
+        sentVia = nil
+        onNewFile?()
+    }
+
+    func reset() {
+        fileData = Data(); fileName = ""; code = ""; progress = 0; sentVia = nil; error = nil
+        onNewFile?()
+    }
+
+    func sent(_ bytes: Int, via: String) {
+        progress = Double(bytes) / Double(max(fileData.count, 1))
+        if bytes >= fileData.count { sentVia = via; NSSound(named: "Glass")?.play() }
     }
 }
 
 // MARK: - Bluetooth (this Mac acts as the device the phone connects to)
 
 final class Bluetooth: NSObject, CBPeripheralManagerDelegate {
+    let m: Model
     var manager: CBPeripheralManager!
     var offset = 0
 
-    override init() {
+    init(_ m: Model) {
+        self.m = m
         super.init()
         manager = CBPeripheralManager(delegate: self, queue: nil)
     }
 
+    // (Re)publish the service for the current file and code
+    func publish() {
+        guard manager.state == .poweredOn else { return }
+        manager.stopAdvertising()
+        manager.removeAllServices()
+        offset = 0
+        guard m.hasFile else { m.btText = "Bluetooth ready"; m.btOK = true; return }
+        let info = CBMutableCharacteristic(type: INFO_C, properties: [.read], value: nil, permissions: [.readable])
+        let off = CBMutableCharacteristic(type: OFFSET_C, properties: [.write], value: nil, permissions: [.writeable])
+        let data = CBMutableCharacteristic(type: DATA_C, properties: [.read], value: nil, permissions: [.readable])
+        let service = CBMutableService(type: m.service, primary: true)
+        service.characteristics = [info, off, data]
+        manager.add(service)
+    }
+
     func peripheralManagerDidUpdateState(_ p: CBPeripheralManager) {
+        m.btOK = false
         switch p.state {
-        case .poweredOn:
-            let info = CBMutableCharacteristic(type: INFO_C, properties: [.read], value: nil, permissions: [.readable])
-            let off = CBMutableCharacteristic(type: OFFSET_C, properties: [.write], value: nil, permissions: [.writeable])
-            let data = CBMutableCharacteristic(type: DATA_C, properties: [.read], value: nil, permissions: [.readable])
-            let service = CBMutableService(type: SERVICE, primary: true)
-            service.characteristics = [info, off, data]
-            p.removeAllServices()
-            p.add(service)
-        case .poweredOff:
-            print("   Bluetooth: off — turn it on in Control Center to use it.")
-        case .unauthorized:
-            print("   Bluetooth: not allowed — System Settings › Privacy & Security › Bluetooth, turn on Terminal, then run TagDrop again.")
-        case .unsupported:
-            print("   Bluetooth: this Mac can't do it. Use the cable instead.")
-        default:
-            break
+        case .poweredOn: publish()
+        case .poweredOff: m.btText = "Bluetooth is off — turn it on in Control Center"
+        case .unauthorized: m.btText = "Bluetooth not allowed — System Settings › Privacy & Security › Bluetooth"
+        case .unsupported: m.btText = "This Mac can't do Bluetooth LE — use the cable"
+        default: m.btText = "Starting Bluetooth…"
         }
     }
 
     func peripheralManager(_ p: CBPeripheralManager, didAdd service: CBService, error: Error?) {
-        if let error { print("   Bluetooth: couldn't start (\(error.localizedDescription))"); return }
-        p.startAdvertising([
-            CBAdvertisementDataServiceUUIDsKey: [SERVICE],
-            CBAdvertisementDataLocalNameKey: "TagDrop",
-        ])
+        if let error { m.btText = "Bluetooth error: \(error.localizedDescription)"; return }
+        p.startAdvertising([CBAdvertisementDataServiceUUIDsKey: [service.uuid], CBAdvertisementDataLocalNameKey: "TagDrop"])
     }
 
     func peripheralManagerDidStartAdvertising(_ p: CBPeripheralManager, error: Error?) {
-        if let error { print("   Bluetooth: couldn't start (\(error.localizedDescription))") }
-        else { print("   Bluetooth: ready ✓") }
+        if let error { m.btText = "Bluetooth error: \(error.localizedDescription)"; m.btOK = false }
+        else { m.btText = "Bluetooth ready — waiting for the phone"; m.btOK = true }
     }
 
     func peripheralManager(_ p: CBPeripheralManager, didReceiveRead req: CBATTRequest) {
         let source: Data
         switch req.characteristic.uuid {
         case INFO_C:
-            source = infoJSON
+            source = m.infoJSON
+            if req.offset == 0 { m.btText = "Phone connected — sending…" }
         case DATA_C:
-            let end = min(offset + CHUNK, fileData.count)
-            source = offset < end ? fileData.subdata(in: offset..<end) : Data()
-            if req.offset == 0 { progress(end, via: "Bluetooth") }
+            let end = min(offset + CHUNK, m.fileData.count)
+            source = offset < end ? m.fileData.subdata(in: offset..<end) : Data()
+            if req.offset == 0 { m.sent(end, via: "Bluetooth") }
         default:
             p.respond(to: req, withResult: .attributeNotFound)
             return
         }
-        guard req.offset <= source.count else {
-            p.respond(to: req, withResult: .invalidOffset)
-            return
-        }
+        guard req.offset <= source.count else { p.respond(to: req, withResult: .invalidOffset); return }
         req.value = source.subdata(in: req.offset..<source.count)
         p.respond(to: req, withResult: .success)
     }
 
     func peripheralManager(_ p: CBPeripheralManager, didReceiveWrite reqs: [CBATTRequest]) {
         for r in reqs where r.characteristic.uuid == OFFSET_C {
-            guard let v = r.value, v.count == 4 else {
-                p.respond(to: r, withResult: .invalidAttributeValueLength)
-                return
-            }
+            guard let v = r.value, v.count == 4 else { p.respond(to: r, withResult: .invalidAttributeValueLength); return }
             let b = [UInt8](v)
             offset = Int(b[0]) | Int(b[1]) << 8 | Int(b[2]) << 16 | Int(b[3]) << 24
         }
@@ -171,25 +154,61 @@ final class Bluetooth: NSObject, CBPeripheralManagerDelegate {
 // MARK: - Cable (tiny server on this Mac; `adb reverse` tunnels it over USB)
 
 final class Cable {
+    let m: Model
     var listener: NWListener?
+    var timer: Timer?
 
-    init() {
+    init(_ m: Model) {
+        self.m = m
         let params = NWParameters.tcp
         params.requiredInterfaceType = .loopback // only reachable from this Mac / the USB tunnel
         params.allowLocalEndpointReuse = true
-        do {
-            listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: PORT)!)
-        } catch {
-            print("   Cable: port \(PORT) is busy, cable mode is off.")
-            return
-        }
+        listener = try? NWListener(using: params, on: NWEndpoint.Port(rawValue: PORT)!)
         listener?.newConnectionHandler = { [weak self] c in self?.handle(c) }
         listener?.start(queue: .main)
+
+        if listener == nil { m.cableText = "Cable off — port \(PORT) is busy" }
+        else if Cable.adbPath() == nil { m.cableText = "Cable needs Android tools: brew install android-platform-tools" }
+        else {
+            m.cableText = "Cable: plug in an Android phone (USB debugging on)"
+            check()
+            timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.check() }
+        }
+    }
+
+    static func adbPath() -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return ["/opt/homebrew/bin/adb", "/usr/local/bin/adb",
+                "\(home)/Library/Android/sdk/platform-tools/adb", "\(home)/platform-tools/adb"]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    @discardableResult
+    static func adb(_ args: [String]) -> Bool {
+        guard let path = adbPath() else { return false }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = args
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do { try p.run(); p.waitUntilExit() } catch { return false }
+        return p.terminationStatus == 0
+    }
+
+    // Keep trying the USB tunnel so plugging the phone in later still works
+    func check() {
+        DispatchQueue.global().async {
+            let ok = Cable.adb(["reverse", "tcp:\(PORT)", "tcp:\(PORT)"])
+            DispatchQueue.main.async {
+                self.m.cableOK = ok
+                self.m.cableText = ok ? "Cable: phone connected" : "Cable: plug in an Android phone (USB debugging on)"
+            }
+        }
     }
 
     func handle(_ c: NWConnection) {
         c.start(queue: .main)
-        c.receive(minimumIncompleteLength: 1, maximumLength: 16384) { data, _, _, _ in
+        c.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [m] data, _, _, _ in
             guard let data, let text = String(data: data, encoding: .utf8),
                   let line = text.components(separatedBy: "\r\n").first else { c.cancel(); return }
             let parts = line.split(separator: " ")
@@ -202,15 +221,15 @@ final class Cable {
             var body = Data()
             if method == "OPTIONS" {
                 status = "204 No Content"
-            } else if given != code {
+            } else if !m.hasFile || given != m.code {
                 status = "403 Forbidden"
                 body = Data("{\"error\":\"wrong code\"}".utf8)
             } else if comps?.path == "/info" {
-                body = infoJSON
+                body = m.infoJSON
             } else if comps?.path == "/file" {
                 type = "application/octet-stream"
-                body = fileData
-                progress(fileData.count, via: "Cable")
+                body = m.fileData
+                m.sent(m.fileData.count, via: "Cable")
             } else {
                 status = "404 Not Found"
             }
@@ -226,71 +245,189 @@ final class Cable {
     }
 }
 
-func findADB() -> String? {
-    let home = FileManager.default.homeDirectoryForCurrentUser.path
-    let spots = ["/opt/homebrew/bin/adb", "/usr/local/bin/adb",
-                 "\(home)/Library/Android/sdk/platform-tools/adb", "\(home)/platform-tools/adb"]
-    return spots.first { FileManager.default.isExecutableFile(atPath: $0) }
+// MARK: - Window
+
+extension Color {
+    init(hex: UInt32) {
+        self.init(red: Double((hex >> 16) & 0xFF) / 255, green: Double((hex >> 8) & 0xFF) / 255, blue: Double(hex & 0xFF) / 255)
+    }
+    static let bg = Color(hex: 0x14110F), card = Color(hex: 0x1F1B18), line = Color(hex: 0x3A332D)
+    static let ink = Color(hex: 0xF4EDE4), dim = Color(hex: 0xA39686), accent = Color(hex: 0xFFD23F)
+    static let ok = Color(hex: 0x5FD38D), bad = Color(hex: 0xFF6B5B)
 }
 
-@discardableResult
-func adb(_ path: String, _ args: [String]) -> Bool {
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: path)
-    p.arguments = args
-    p.standardOutput = FileHandle.nullDevice
-    p.standardError = FileHandle.nullDevice
-    do { try p.run(); p.waitUntilExit() } catch { return false }
-    return p.terminationStatus == 0
+struct Card<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) { content }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 18).fill(Color.card))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.line, lineWidth: 1))
+    }
 }
 
-// Keep trying the USB tunnel so plugging the phone in later still works.
-var tunnelUp = false
-func checkCable() {
-    guard let path = findADB() else { return }
-    let ok = adb(path, ["reverse", "tcp:\(PORT)", "tcp:\(PORT)"])
-    if ok && !tunnelUp { print("   Cable: phone connected ✓") }
-    tunnelUp = ok
+struct StatusRow: View {
+    let ok: Bool, text: String
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle().fill(ok ? Color.ok : Color.dim).frame(width: 9, height: 9).padding(.top, 4)
+            Text(text).font(.system(size: 13)).foregroundColor(ok ? .ink : .dim).fixedSize(horizontal: false, vertical: true)
+        }
+    }
 }
 
-// MARK: - Go
+struct ContentView: View {
+    @ObservedObject var m: Model
+    @State private var hovering = false
+    @State private var copied = false
 
-print("""
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 0) {
+                Text("Tag").foregroundColor(.ink)
+                Text("Drop").foregroundColor(.accent)
+            }.font(.system(size: 30, weight: .bold, design: .rounded))
 
-   📲  TagDrop
+            if m.hasFile { sending } else { dropZone }
 
-   File:  \(fileURL.lastPathComponent) (\(fileData.count) bytes)
+            if let e = m.error {
+                Text(e).font(.system(size: 13)).foregroundColor(.bad).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(26)
+        .frame(width: 440, height: 600)
+        .background(Color.bg)
+        .onDrop(of: [UTType.fileURL], isTargeted: $hovering) { providers in
+            guard let item = providers.first else { return false }
+            _ = item.loadObject(ofClass: URL.self) { url, _ in
+                if let url { DispatchQueue.main.async { m.load(url) } }
+            }
+            return true
+        }
+    }
 
-   On your phone, open  \(SITE)
-   and type this code:
+    var dropZone: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "square.and.arrow.down").font(.system(size: 42, weight: .medium)).foregroundColor(.accent)
+            Text("Drop a .bin file here").font(.system(size: 18, weight: .semibold, design: .rounded)).foregroundColor(.ink)
+            Text("It goes to your phone over Bluetooth or USB,\nthen onto an NFC tag.")
+                .font(.system(size: 13)).foregroundColor(.dim).multilineTextAlignment(.center)
+            Button(action: choose) {
+                Text("Choose File…").font(.system(size: 14, weight: .semibold)).foregroundColor(Color(hex: 0x1A1405))
+                    .padding(.horizontal, 22).padding(.vertical, 10)
+                    .background(Capsule().fill(Color.accent))
+            }.buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, minHeight: 380)
+        .background(RoundedRectangle(cornerRadius: 22).fill(hovering ? Color.card : Color.bg))
+        .overlay(RoundedRectangle(cornerRadius: 22).stroke(hovering ? Color.accent : Color.line, style: StrokeStyle(lineWidth: 2, dash: [8, 6])))
+    }
 
-          ┌─────────────┐
-          │   \(code.map(String.init).joined(separator: " "))   │
-          └─────────────┘
+    var sending: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Card {
+                Text("ON YOUR PHONE, OPEN").font(.system(size: 11, weight: .semibold)).kerning(1.4).foregroundColor(.dim)
+                HStack {
+                    Text(SITE_SHORT).font(.system(size: 16, weight: .semibold, design: .rounded)).foregroundColor(.accent)
+                    Spacer()
+                    Button(copied ? "Copied" : "Copy link") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString("\(SITE)/#\(m.code)", forType: .string)
+                        copied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                    }.buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundColor(.dim)
+                }
+                Text("AND TYPE").font(.system(size: 11, weight: .semibold)).kerning(1.4).foregroundColor(.dim)
+                HStack(spacing: 8) {
+                    ForEach(Array(m.code.enumerated()), id: \.offset) { _, ch in
+                        Text(String(ch))
+                            .font(.system(size: 30, weight: .bold, design: .monospaced)).foregroundColor(.ink)
+                            .frame(width: 50, height: 62)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Color.bg))
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.line, lineWidth: 2))
+                    }
+                }.textSelection(.enabled)
+                Text("Android: Chrome  ·  iPhone: Bluefy").font(.system(size: 12)).foregroundColor(.dim)
+            }
 
-""")
+            Card {
+                HStack {
+                    Image(systemName: "doc").foregroundColor(.dim)
+                    Text(m.fileName).font(.system(size: 14, weight: .medium)).foregroundColor(.ink).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Text("\(m.fileData.count) bytes").font(.system(size: 12)).foregroundColor(.dim)
+                }
+                ProgressView(value: m.progress).tint(m.sentVia == nil ? .accent : .ok)
+                if let via = m.sentVia {
+                    Text("Sent over \(via) ✓  The phone can write the tag now.")
+                        .font(.system(size: 13, weight: .medium)).foregroundColor(.ok)
+                }
+                StatusRow(ok: m.btOK, text: m.btText)
+                StatusRow(ok: m.cableOK, text: m.cableText)
+            }
 
-let bluetooth = Bluetooth()
-let cable = Cable()
-if findADB() == nil {
-    print("   Cable: needs Android platform-tools (brew install android-platform-tools)")
-    print("          and USB debugging on the phone. Bluetooth works without it.")
-} else {
-    print("   Cable: plug the phone in with USB debugging on (or just use Bluetooth).")
-    checkCable()
-    Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in checkCable() }
+            HStack {
+                Button("Send a different file") { m.reset() }
+                    .buttonStyle(.plain).font(.system(size: 13, weight: .medium)).foregroundColor(.dim)
+                Spacer()
+                Button("New code") { if let u = m.url { m.load(u) } }
+                    .buttonStyle(.plain).font(.system(size: 13, weight: .medium)).foregroundColor(.dim)
+            }
+        }
+    }
+
+    func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Pick the .bin file to send"
+        if panel.runModal() == .OK, let url = panel.url { m.load(url) }
+    }
 }
 
-// Ctrl+C: remove the USB tunnel, then quit
-signal(SIGINT, SIG_IGN)
-let stopSignal = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-stopSignal.setEventHandler {
-    if let path = findADB() { adb(path, ["reverse", "--remove", "tcp:\(PORT)"]) }
-    print("\n   Bye!")
-    exit(0)
-}
-stopSignal.resume()
+// MARK: - App
 
-withExtendedLifetime((bluetooth, cable, stopSignal)) {
-    RunLoop.main.run()
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationWillTerminate(_ notification: Notification) { Cable.adb(["reverse", "--remove", "tcp:\(PORT)"]) }
+}
+
+let model = Model()
+let bluetooth = Bluetooth(model)
+let cable = Cable(model)
+model.onNewFile = { bluetooth.publish() }
+if CommandLine.arguments.count > 1 { model.load(URL(fileURLWithPath: CommandLine.arguments[1])) }
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.setActivationPolicy(.regular)
+
+// Menu so ⌘Q and ⌘W work
+let mainMenu = NSMenu()
+let appItem = NSMenuItem()
+mainMenu.addItem(appItem)
+let appMenu = NSMenu()
+appMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+appMenu.addItem(withTitle: "Quit TagDrop", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+appItem.submenu = appMenu
+app.mainMenu = mainMenu
+
+let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 600),
+                      styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+                      backing: .buffered, defer: false)
+window.title = "TagDrop"
+window.titlebarAppearsTransparent = true
+window.backgroundColor = NSColor(red: 0x14 / 255, green: 0x11 / 255, blue: 0x0F / 255, alpha: 1)
+window.appearance = NSAppearance(named: .darkAqua)
+window.isReleasedWhenClosed = false
+window.contentView = NSHostingView(rootView: ContentView(m: model))
+window.center()
+window.makeKeyAndOrderFront(nil)
+app.activate(ignoringOtherApps: true)
+
+withExtendedLifetime((bluetooth, cable, delegate)) {
+    app.run()
 }
