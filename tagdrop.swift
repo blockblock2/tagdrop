@@ -285,7 +285,9 @@ enum RecKind: String, CaseIterable, Identifiable {
 final class Rec: ObservableObject, Identifiable {
     let id = UUID()
     let kind: RecKind
-    @Published var a = "", b = "", c = ""
+    @Published var a = ""
+    @Published var b = ""
+    @Published var c = ""
     @Published var secure = 0 // Wi-Fi: 0 = WPA2/WPA3, 1 = open
     init(_ kind: RecKind) {
         self.kind = kind
