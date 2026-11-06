@@ -1,4 +1,4 @@
-// TagDrop — send a .bin file from this Mac to a phone over Bluetooth or a USB
+// TagDrop — send a .bin or .nfc (Flipper Zero) file from this Mac to a phone over Bluetooth or a USB
 // cable. The phone opens the TagDrop website, types the code shown here, and
 // writes the file to an NFC tag.
 //
@@ -311,7 +311,7 @@ struct ContentView: View {
     var dropZone: some View {
         VStack(spacing: 14) {
             Image(systemName: "square.and.arrow.down").font(.system(size: 42, weight: .medium)).foregroundColor(.accent)
-            Text("Drop a .bin file here").font(.system(size: 18, weight: .semibold, design: .rounded)).foregroundColor(.ink)
+            Text("Drop a .bin or .nfc file here").font(.system(size: 18, weight: .semibold, design: .rounded)).foregroundColor(.ink)
             Text("It goes to your phone over Bluetooth or USB,\nthen onto an NFC tag.")
                 .font(.system(size: 13)).foregroundColor(.dim).multilineTextAlignment(.center)
             Button(action: choose) {
@@ -382,7 +382,7 @@ struct ContentView: View {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.message = "Pick the .bin file to send"
+        panel.message = "Pick the .bin or .nfc file to send"
         if panel.runModal() == .OK, let url = panel.url { m.load(url) }
     }
 }

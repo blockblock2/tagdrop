@@ -26,7 +26,9 @@ bananapeel run tagdrop
 - **Cable:** a tiny server on the Mac (localhost only, needs the code) is tunnelled to the phone over USB.
 - **NFC:** the page writes the file as one NDEF record (`application/octet-stream`) with Web NFC.
 
-Tag dumps (NTAG/Ultralight `.bin`): on Android, TagDrop reads what was stored on the old tag and writes that to the new one. The new tag keeps its own serial number.
+Flipper Zero `.nfc` files work too — the phone turns them into the same bytes as a `.bin`.
+
+Tag dumps (NTAG/Ultralight `.bin` or `.nfc`): on Android, TagDrop reads what was stored on the old tag and writes that to the new one. The new tag keeps its own serial number.
 
 Limits: files up to 64 KB (tags are much smaller: NTAG213 ≈ 137 B, NTAG215 ≈ 496 B, NTAG216 ≈ 868 B). Other `.bin` files are written as one data record.
 

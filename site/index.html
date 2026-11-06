@@ -44,7 +44,7 @@
 <body>
 <main>
   <h1>Tag<span>Drop</span></h1>
-  <p class="sub">Get a .bin file from your computer and write it to an NFC tag.</p>
+  <p class="sub">Get a .bin or .nfc file from your computer and write it to an NFC tag.</p>
 
   <div id="unsupported" class="card warn hidden"></div>
 
@@ -254,7 +254,34 @@ function gotInfo(info) {
 }
 
 // ---- NFC ----
+// Flipper Zero .nfc files are text: "Page 0: 04 A1 B2 99" (NTAG/Ultralight) or "Block 0: …" (MIFARE Classic).
+// Turn them into the same raw bytes a .bin has.
+let isClassic = false;
+function fromFlipper(bytes) {
+  const head = new TextDecoder().decode(bytes.subarray(0, 64));
+  if (!head.startsWith('Filetype: Flipper NFC')) return null;
+  const text = new TextDecoder().decode(bytes), pages = [];
+  let kind = null;
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^(Page|Block) (\d+):\s*((?:[0-9A-Fa-f?]{2}\s*)+)$/);
+    if (!m) continue;
+    kind = m[1];
+    pages[+m[2]] = m[3].trim().split(/\s+/).map(h => h === '??' ? 0 : parseInt(h, 16));
+  }
+  if (!pages.length) throw new Error("That .nfc file has no tag memory in it (it may be a UID-only save).");
+  const size = kind === 'Block' ? 16 : 4;
+  const out = new Uint8Array(pages.length * size);
+  pages.forEach((p, i) => p && out.set(p.slice(0, size), i * size));
+  isClassic = kind === 'Block';
+  return out;
+}
+
 function received(bytes) {
+  isClassic = false;
+  try {
+    const conv = fromFlipper(bytes);
+    if (conv) { bytes = conv; fileName = fileName.replace(/\.nfc$/i, '') + '.bin'; }
+  } catch (e) { return status($('recvMsg'), e.message, 'bad'); }
   file = bytes;
   status($('recvMsg'), 'Got it ✓', 'ok');
   $('s3').classList.remove('hidden');
@@ -262,6 +289,7 @@ function received(bytes) {
   $('saveBtn').textContent = 'Save file';
   $('s3').scrollIntoView({ behavior: 'smooth' });
 
+  if (isClassic) return handOff('This is a <b>MIFARE Classic</b> tag. Websites can\'t write those. Tap <b>' + (canShareBin() ? 'Send to app' : 'Save file') + '</b> and write it with <b>NFC Tools</b> (Write Dump) or MIFARE Classic Tool on Android.');
   if (isAmiibo(bytes)) return handOff(isIOS
     ? 'This is an <b>amiibo</b>. Tap <b>Send to app</b> and pick your amiibo app (like <b>Tagmiibo</b>), then write it to a blank NTAG215.'
     : 'This is an <b>amiibo</b>. Tap <b>Save file</b>, then open it in <b>TagMo</b> (free, Android) and write it to a blank NTAG215. TagMo asks for your own amiibo key files the first time.');
