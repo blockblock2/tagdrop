@@ -11,6 +11,10 @@ bananapeel run tagdrop
 2. On the phone, open **https://tagdropper.pages.dev** in Chrome and type the code.
 3. Tap **Bluetooth** (or **USB cable**), then hold an NFC tag to the back of the phone.
 
+## Make a tag
+
+Switch the Mac window to **Make a tag** to build a tag from scratch instead of sending a file: links, text, phone calls, email, SMS, map locations, Wi-Fi networks, contact cards, Android apps and custom data. Add as many as fit (the window shows the size and which NTAG it needs), reorder them, then **Send to phone**. A phone that taps the tag runs the first item.
+
 ## What you need
 
 - **Mac** with Swift (comes with Xcode Command Line Tools: `xcode-select --install`). The first time, macOS asks to let Terminal use Bluetooth. Click Allow.

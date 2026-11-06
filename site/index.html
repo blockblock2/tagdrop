@@ -304,7 +304,7 @@ function received(bytes) {
   if (isTagDump(bytes)) {
     records = recordsFromDump(bytes);
     if (!records || !records.length) return handOff('This is a dump of an <b>empty tag</b> — there\'s nothing on it to write.');
-    $('sizeNote').textContent = `Tag dump: writing what was stored on it (${records.length} record${records.length > 1 ? 's' : ''}). The new tag keeps its own serial number.`;
+    $('sizeNote').textContent = `Writing ${records.length} item${records.length > 1 ? 's' : ''} to the tag.`;
     return writeTag();
   }
 
