@@ -35,6 +35,8 @@ final class Model: ObservableObject {
     @Published var progress: Double = 0
     @Published var sentVia: String?
     @Published var error: String?
+    @Published var hovering = false // window UI state lives here: @State needs a plugin
+    @Published var copied = false   // that Command Line Tools' Swift doesn't have
 
     var infoJSON = Data()
     var url: URL?
@@ -279,8 +281,6 @@ struct StatusRow: View {
 
 struct ContentView: View {
     @ObservedObject var m: Model
-    @State private var hovering = false
-    @State private var copied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -299,7 +299,7 @@ struct ContentView: View {
         .padding(26)
         .frame(width: 440, height: 600)
         .background(Color.bg)
-        .onDrop(of: [UTType.fileURL], isTargeted: $hovering) { providers in
+        .onDrop(of: [UTType.fileURL], isTargeted: $m.hovering) { providers in
             guard let item = providers.first else { return false }
             _ = item.loadObject(ofClass: URL.self) { url, _ in
                 if let url { DispatchQueue.main.async { m.load(url) } }
@@ -321,8 +321,8 @@ struct ContentView: View {
             }.buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, minHeight: 380)
-        .background(RoundedRectangle(cornerRadius: 22).fill(hovering ? Color.card : Color.bg))
-        .overlay(RoundedRectangle(cornerRadius: 22).stroke(hovering ? Color.accent : Color.line, style: StrokeStyle(lineWidth: 2, dash: [8, 6])))
+        .background(RoundedRectangle(cornerRadius: 22).fill(m.hovering ? Color.card : Color.bg))
+        .overlay(RoundedRectangle(cornerRadius: 22).stroke(m.hovering ? Color.accent : Color.line, style: StrokeStyle(lineWidth: 2, dash: [8, 6])))
     }
 
     var sending: some View {
@@ -332,11 +332,11 @@ struct ContentView: View {
                 HStack {
                     Text(SITE_SHORT).font(.system(size: 16, weight: .semibold, design: .rounded)).foregroundColor(.accent)
                     Spacer()
-                    Button(copied ? "Copied" : "Copy link") {
+                    Button(m.copied ? "Copied" : "Copy link") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString("\(SITE)/#\(m.code)", forType: .string)
-                        copied = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                        m.copied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { m.copied = false }
                     }.buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundColor(.dim)
                 }
                 Text("AND TYPE").font(.system(size: 11, weight: .semibold)).kerning(1.4).foregroundColor(.dim)
