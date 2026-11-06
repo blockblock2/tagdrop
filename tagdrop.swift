@@ -47,11 +47,16 @@ func pickFile() -> URL {
     return URL(fileURLWithPath: unescapeDragged(line))
 }
 
-let fileURL = pickFile()
-guard let fileData = try? Data(contentsOf: fileURL) else {
-    print("✖ Couldn't open \(fileURL.path)")
-    exit(1)
+func loadFile(_ url: URL) -> Data {
+    guard let d = try? Data(contentsOf: url) else {
+        print("✖ Couldn't open \(url.path)")
+        exit(1)
+    }
+    return d
 }
+
+let fileURL = pickFile()
+let fileData = loadFile(fileURL)
 if fileData.isEmpty { print("✖ That file is empty."); exit(1) }
 if fileData.count > MAX_SIZE {
     print("✖ That file is \(fileData.count) bytes. NFC tags hold at most a few KB, so TagDrop only sends files up to \(MAX_SIZE / 1024) KB.")
@@ -276,12 +281,16 @@ if findADB() == nil {
     Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in checkCable() }
 }
 
-signal(SIGINT) { _ in
-    if let path = findADB() { adb(path, ["reverse", "--remove", "tcp:8642"]) }
+// Ctrl+C: remove the USB tunnel, then quit
+signal(SIGINT, SIG_IGN)
+let stopSignal = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+stopSignal.setEventHandler {
+    if let path = findADB() { adb(path, ["reverse", "--remove", "tcp:\(PORT)"]) }
     print("\n   Bye!")
     exit(0)
 }
+stopSignal.resume()
 
-withExtendedLifetime((bluetooth, cable)) {
+withExtendedLifetime((bluetooth, cable, stopSignal)) {
     RunLoop.main.run()
 }
