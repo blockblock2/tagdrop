@@ -293,6 +293,11 @@ function received(bytes) {
   if (isAmiibo(bytes)) return handOff(isIOS
     ? 'This is an <b>amiibo</b>. Tap <b>Send to app</b> and pick your amiibo app (like <b>Tagmiibo</b>), then write it to a blank NTAG215.'
     : 'This is an <b>amiibo</b>. Tap <b>Save file</b>, then open it in <b>TagMo</b> (free, Android) and write it to a blank NTAG215. TagMo asks for your own amiibo key files the first time.');
+  if (isIOS && isTagDump(bytes)) {
+    const recs = recordsFromDump(bytes) || [];
+    if (!recs.length) return handOff('This is a dump of an <b>empty tag</b> — there\'s nothing on it to write.');
+    return iosRecords(recs);
+  }
   if (isIOS) return handOff('iPhones only let apps write tags, not websites. Tap <b>Send to app</b> and pick <b>NFC Tools</b>, then use <b>Write Dump (.bin)</b>. (If NFC Tools isn\'t in the list, pick Save to Files.)');
 
   records = null;
@@ -308,6 +313,34 @@ function received(bytes) {
     : need > 496 ? `Needs an NTAG216-size tag or bigger (NTAG213/215 are too small).`
     : need > 137 ? `Fits NTAG215/216 tags (too big for NTAG213).` : `Fits any common NTAG tag.`;
   writeTag();
+}
+
+// iPhone, free way: show what was on the tag so it can be pasted into NFC Tools' free Write screen
+function iosRecords(recs) {
+  handOff('');
+  const dec = new TextDecoder(), box = $('nfcMsg');
+  box.innerHTML = '<b>Free way:</b> in <b>NFC Tools</b> tap <b>Write → Add a record</b>, add each item below, then tap <b>Write</b> and hold the tag.<br><br>';
+  recs.forEach((r, i) => {
+    let kind, value;
+    if (r.recordType === 'url' || r.recordType === 'absolute-url') { kind = 'URL / Link'; value = r.data; }
+    else if (r.recordType === 'text') { kind = 'Text'; value = dec.decode(r.data); }
+    else { kind = r.recordType === 'mime' ? 'Data (' + r.mediaType + ')' : 'Other data'; value = null; }
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;margin:6px 0;text-align:left';
+    const label = document.createElement('div');
+    label.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    label.innerHTML = `<span class="small">${i + 1}. ${kind}</span><br>`;
+    label.appendChild(document.createTextNode(value ?? "can't be added for free — needs Write Dump (Pro)"));
+    row.appendChild(label);
+    if (value != null) {
+      const b = document.createElement('button');
+      b.textContent = 'Copy'; b.className = 'alt'; b.style.cssText = 'flex:0 0 auto;padding:8px 14px';
+      b.onclick = async () => { try { await navigator.clipboard.writeText(value); b.textContent = 'Copied'; } catch { prompt('Copy this:', value); } };
+      row.appendChild(b);
+    }
+    box.appendChild(row);
+  });
+  $('sizeNote').textContent = 'For an exact copy instead, use Send to app → NFC Tools → Write Dump (Pro, $3.99 once).';
 }
 
 // Can this browser hand a .bin straight to another app via the share sheet?

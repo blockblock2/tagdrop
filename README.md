@@ -15,7 +15,7 @@ bananapeel run tagdrop
 
 - **Mac** with Swift (comes with Xcode Command Line Tools: `xcode-select --install`). The first time, macOS asks to let Terminal use Bluetooth. Click Allow.
 - **Android phone:** Chrome, with NFC on. Writes the tag right on the page.
-- **iPhone:** open the page in **Bluefy** (free App Store browser with Bluetooth). Apple doesn't let websites write NFC, so you save the file and finish in **NFC Tools** → *Write Dump (.bin)*.
+- **iPhone:** open the page in **Bluefy** (free App Store browser with Bluetooth). Apple doesn't let websites write NFC, so for normal tags the page shows what's on the tag with Copy buttons to paste into NFC Tools' free *Write* screen. Exact copies use NFC Tools → *Write Dump (.bin)*, which is Pro ($3.99 once).
 - **amiibo:** TagDrop spots amiibo files and hands them to **TagMo** (Android) or **Tagmiibo** (iPhone), which re-encrypt them for your blank NTAG215.
 - **Cable mode only:** `brew install android-platform-tools`, and USB debugging turned on in the phone's Developer options. TagDrop runs `adb reverse` for you, so the phone reaches the Mac through the cable.
 
