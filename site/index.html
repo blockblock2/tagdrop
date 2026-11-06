@@ -263,9 +263,9 @@ function received(bytes) {
   $('s3').scrollIntoView({ behavior: 'smooth' });
 
   if (isAmiibo(bytes)) return handOff(isIOS
-    ? 'This is an <b>amiibo</b>. Tap <b>Save / Share file</b>, then open it in <b>Tagmiibo</b> (App Store) and write it to a blank NTAG215.'
+    ? 'This is an <b>amiibo</b>. Tap <b>Send to app</b> and pick your amiibo app (like <b>Tagmiibo</b>), then write it to a blank NTAG215.'
     : 'This is an <b>amiibo</b>. Tap <b>Save file</b>, then open it in <b>TagMo</b> (free, Android) and write it to a blank NTAG215. TagMo asks for your own amiibo key files the first time.');
-  if (isIOS) return handOff('iPhones only let apps write tags, not websites. Tap <b>Save / Share file</b> → save to Files, then in <b>NFC Tools</b> (App Store) use <b>Write Dump (.bin)</b>.');
+  if (isIOS) return handOff('iPhones only let apps write tags, not websites. Tap <b>Send to app</b> and pick <b>NFC Tools</b>, then use <b>Write Dump (.bin)</b>. (If NFC Tools isn\'t in the list, pick Save to Files.)');
 
   records = null;
   if (isTagDump(bytes)) {
@@ -282,11 +282,18 @@ function received(bytes) {
   writeTag();
 }
 
+// Can this browser hand a .bin straight to another app via the share sheet?
+// (iPhone: yes. Chrome on Android only shares images/videos/text, so it falls back to saving.)
+function canShareBin() {
+  try { return !!(navigator.canShare && navigator.canShare({ files: [new File([new Uint8Array(1)], 'x.bin', { type: 'application/octet-stream' })] })); }
+  catch { return false; }
+}
+
 // Amiibo and iPhone: hand the file to an app that can write it
 function handOff(html) {
   $('tag').className = 'tag';
   $('writeBtn').classList.add('hidden');
-  $('saveBtn').textContent = isIOS ? 'Save / Share file' : 'Save file';
+  $('saveBtn').textContent = canShareBin() ? 'Send to app' : 'Save file';
   $('nfcMsg').className = 'msg'; $('nfcMsg').innerHTML = html;
   $('sizeNote').textContent = '';
 }
