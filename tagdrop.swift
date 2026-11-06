@@ -9,7 +9,7 @@ import Foundation
 import CoreBluetooth
 import Network
 
-let SITE = "https://blockblock2.github.io/tagdrop"
+let SITE = "https://tagdrop.pages.dev"
 let PORT: UInt16 = 8642
 let MAX_SIZE = 64 * 1024
 let CHUNK = 512 // biggest value one Bluetooth characteristic can hold

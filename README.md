@@ -8,7 +8,7 @@ bananapeel run tagdrop
 ```
 
 1. Drag your `.bin` file into the window. TagDrop shows a code like `ABC123`.
-2. On the phone, open **https://blockblock2.github.io/tagdrop** in Chrome and type the code.
+2. On the phone, open **https://tagdrop.pages.dev** in Chrome and type the code.
 3. Tap **Bluetooth** (or **USB cable**), then hold an NFC tag to the back of the phone.
 
 ## What you need
@@ -32,4 +32,8 @@ Limits: files up to 64 KB (tags are much smaller: NTAG213 ≈ 137 B, NTAG215 ≈
 
 ## The website
 
-The phone page lives in `docs/` and is served by GitHub Pages at https://blockblock2.github.io/tagdrop.
+The phone page is `site/index.html`, on Cloudflare Pages at https://tagdrop.pages.dev:
+
+```bash
+git clone https://github.com/blockblock2/tagdrop ~/sites/tagdrop && cd ~/sites/tagdrop && wrangler pages deploy site --project-name tagdrop
+```
