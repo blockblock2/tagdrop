@@ -1,0 +1,7 @@
+{
+  "name": "tagdrop",
+  "title": "TagDrop",
+  "version": "1.0.0",
+  "description": "Send a .bin file to an Android phone over Bluetooth or USB, then write it to an NFC tag. The phone types a code shown on your computer.",
+  "main": "tagdrop.swift"
+}
